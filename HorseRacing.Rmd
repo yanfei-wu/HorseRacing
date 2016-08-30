@@ -1,0 +1,248 @@
+---
+title: "Horse Racing: What Affacts Winning? (I)"
+author: "Yanfei Wu"
+date: "August 28, 2016"
+output: 
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```  
+
+
+## Introduction  
+
+Horse racing is a performance sport that can be dated back to ancient times, e.g., Ancient Greece and Egypt. But nowerdays, the major interest in horse racing lies in the fact that it is associated with gambling. This also affords horse racing great economic importance. Like many other risk-return oprions, horse racing is about assesment of the risks and prediction of the outcomes. So in this notebook, I try to analyze different factors that could potentially influence winning using 2016 daily horse racing data from Kaggle Datasets (<http://kaggle.com//lukebyrne/horses-for-courses>). The data has been actively collected and aggregated from many different public sources.  
+
+In this Part I of the analysis, factors that are potentially related to winning are analyzed, including:  
+1. The horses, including age and sex  
+2. The weather on the racing day   
+3. Some parameters of the races, including distance, number of barriers, the carried weights
+
+## Exploratory Analysis  
+  
+### 1. Load Packages and Data  
+
+```{r, packages, echo = T}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+```  
+
+```{r, data}
+condition <- read.csv('conditions.csv')
+form <-read.csv('forms.csv')
+horse <- read.csv('horses.csv')
+horse_sex <- read.csv('horse_sexes.csv')
+market <- read.csv('markets.csv')
+odds <- read.csv('odds.csv')
+rider <- read.csv('riders.csv')
+runner <- read.csv('runners.csv')
+weather <- read.csv('weathers.csv')
+```  
+The basic information of these data sets is included in **Appendix**.
+
+### 2. Visualization and Basic Statistics   
+  
+#### *2.1 Horse: How do horse age and sex impact winning?*   
+
+Let's first examine the horse data frame and the horse_sex data frame. Upon initial examination of the data frames, several steps are taken to clean the data sets, including:  
+  
+a. Remove 193 NA values in the horse data frame because no good values can be used to fill the NAs.  
+```{r clean 1, echo = F, results = 'hide'}
+# NA values in horse
+sapply(horse, FUN = function(x) sum(is.na(x)))
+horse <- horse[complete.cases(horse), ]
+# no NA value in horse_sex
+sapply(horse_sex, FUN = function(x) sum(is.na(x)))
+```   
+b. Merge horse data frame with horse_sex data frame.  
+```{r, merge, echo = F}
+# Merge horse and horse_sex data.frame  
+horse_df <- left_join(horse, horse_sex, by = c('sex_id' = 'id'))
+# the sire_id, dam_id are not analyzed because no sire or dam information is available
+horse_df <- select(horse_df, id, age, name, prize_money)
+horse_df$age <- as.factor(horse_df$age)
+horse_df$name <- as.factor(horse_df$name)
+```   
+c. Remove outliers (3 horses with prize > 3,000,000 at age 3, 5, and 6)  
+```{r outlier, echo = F}
+horse_df <- filter(horse_df, prize_money < 3e6)
+```  
+The number of unique values for each variable in the merged data frame is:  
+```{r unique values, echo = F}
+sapply(horse_df, FUN = function(x) length(unique(x)))
+```
+
+The age and sex distributions of the horses are shown below:   
+```{r age dist, fig.align = 'center', echo = F}
+plot1 = qplot(age, data = horse_df, main = 'Age Distribution')
+plot2 = qplot(name, data = horse_df, main = 'Sex Distribution')
+grid.arrange(plot1, plot2, ncol = 2)
+```  
+
+```{r age dist by sex, fig.align = 'center', echo = F}
+qplot(age, data = horse_df, facets = name ~., main = "Age Distribution by Sex")
+```  
+As shown above, horses in the race are typically between 2-12 years old. The majority of horses are within the age of 3-5. Also, most of the horses are Gelding (castrated male horses) as expected.   
+
+The age distribution by sex shows that the age of the horses are actually correlated with the sex of horses. The age distribution for Gelding is close to normal, peaked at 5. For Colt (young, uncastrated male horse) and Filly (young female horse), only horses at the age of 2 or 3 are in the race. The age peaks at 3. For Mare (adult female horse), however, they are older than 4 and most of them are at 4. So it makes more sense to consider the impact of horse age and sex as a combined feature.   
+
+For example, the winnings of the horses at different ages are ploted by different sexes:  
+
+```{r prize vs age by sex, fig.height = 6.0, fig.width = 8.0, fig.align = 'center', echo = F}
+ggplot(horse_df, aes(x = age, y = prize_money)) +
+  geom_boxplot(aes(fill = age)) + 
+  facet_wrap(~name) + 
+  labs(x = 'Age', y = 'Prize Money', title = 'Impact of Horse Age on Prize Winning')
+```  
+
+We can also concatenate age and sex to make a new categorical variable, and calculate/plot the mean, standard deviation, and median of the prize money for each group.  
+```{r new df, echo = F}
+horse_df_grouped <- horse_df %>% group_by(name, age) %>% 
+  summarize(mean_prize = mean(prize_money), sd_prize = sd(prize_money), median_prize = median(prize_money)) %>% 
+  mutate(sex_age = paste(name, age, sep = '_'))
+horse_df_grouped$sex_age <- as.factor(horse_df_grouped$sex_age)
+horse_df_grouped
+```    
+
+```{r sex_age plot, fig.width = 9.0, fig.height = 7.0, fig.align = 'center', echo = F}
+plot1 = ggplot(horse_df_grouped, aes(x = sex_age, y = mean_prize, group = 1)) + 
+  geom_point() + geom_line(color = 'red') + 
+  geom_errorbar(aes(ymin = mean_prize - sd_prize, ymax = mean_prize + sd_prize), width=.1) + 
+  labs(x = 'Sex_Age Group', y = 'Mean Prize Money', title = 'Mean Prize Money by Sex_Age Group') + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+plot2 = ggplot(horse_df_grouped, aes(x = sex_age, y = median_prize, group = 1)) + 
+  geom_point() + geom_line(color = 'blue') + 
+  labs(x = 'Sex_Age Group', y = 'Median Prize Money', title = 'Median Prize Money by Sex_Age Group') + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+grid.arrange(plot1, plot2, nrow = 2)
+```   
+According to the above plots, roughly, the prize money increases as the age of the horses increases for all the sexes. But as horses become too old (e.g., Gelding older than 10), the prize money starts to fluctuate and shows an overall decreasing trend.  
+    
+      
+#### *2.2 Weather Information: How does the weather on the racing day impact winning?*   
+
+Next, let's look at the impact of weather. In order to do this, the form, market, horse, weather data frames are merged and variables of interest are selected to form a subset.
+```{r merge form, market and horse_df, echo = F}
+levels(weather$name)[1] <- 'Not_Reported'
+names(weather) = c('id', 'weather')
+merge_df <- left_join(form, market, by = c('market_id' = 'id'))
+merge_df <- left_join(merge_df, horse_df, by = c('horse_id' = 'id'))
+merge_df <- left_join(merge_df, weather, by = c('weather_id' = 'id'))
+merge_df1 <- merge_df %>% mutate(horse = paste(name, age, sep = '_')) %>% 
+  select(market_id, horse, weather, prize_money)
+merge_df1 <- merge_df1[complete.cases(merge_df1), ]
+merge_df1$horse <- as.factor(merge_df1$horse)
+str(merge_df1)
+```  
+The number of unique values in the merged data frame:  
+```{r na values in merge_df1, echo = F}
+sapply(merge_df1, FUN = function(x) length(unique(x)))
+```
+The distribution of weather is shown below. We see that most of the races happen on fine days.
+```{r weather statistics, fig.align = 'center', echo = F}
+counts <- table(merge_df1$weather)
+barplot(counts, main = "Weather Distribution", xlab = "Weather", ylab = 'Counts') 
+```  
+We can visualize the relationship between weather and prize winning as follows.   
+```{r weather vs prize, fig.width = 10.0, fig.align = 'center', echo = F}
+ggplot(merge_df1, aes(x = weather, y = prize_money)) + 
+  geom_boxplot(aes(fill = weather)) +
+  labs(x = 'Weather', y = 'Prize Money', title = 'Prize Money vs. Weather') +
+  coord_flip()
+```
+We see that both FINE and COASt weathers show many outliers. These two weather types seem not to differ too much in terms of the prize, but they are noticeably better for winning compared to SHWRY weather.  
+    
+  
+#### *2.3 Other Racing Parameters: Distance, Number of Barriers, Carried Weights*   
+
+a. Distance  
+Use the merged data frame from 2.2 but include distance variable: 
+```{r merge2, echo = F}
+merge_df2 <- merge_df %>% mutate(horse = paste(name, age, sep = '_')) %>% 
+  select(market_id, horse, weather, distance, prize_money)
+merge_df2 <- merge_df2[complete.cases(merge_df2), ]
+merge_df2$horse <- as.factor(merge_df2$horse)
+str(merge_df2)
+```  
+The relationship between distance and prize money is shown in the scatter plot below:   
+```{r prize vs distance, fig.align = 'center', echo = F}
+ggplot(merge_df2, aes(x = distance, y = prize_money)) +
+  geom_point(alpha = 0.3, color = 'blue') + 
+  labs(x = 'Racing Distance', y = 'Prize Money', title = 'Prize Money vs. Racing Distance')
+```  
+The distance for the majority of the races are within 1000-2000 distance. The racing distance between ~1100-1400 seem to correlate with higher prize money.
+
+b. Number of Barrier and Carried Weights
+Merge runner data frame to the existing merged data frame.
+```{r merge runner, echo = F}
+merge_df3 <- left_join(merge_df2, runner, by = 'market_id')
+merge_df3 <- merge_df3 %>% 
+  select(market_id, horse, weather, distance, barrier, handicap_weight, prize_money)
+merge_df3 <- merge_df3[complete.cases(merge_df3), ]
+merge_df3$horse <- as.factor(merge_df3$horse)
+str(merge_df3)
+```
+Both number of barrier and carried weights are in the new data frame. We can visualize their effects on the winning as below:
+
+```{r barrier, fig.align='center', echo = F}
+ggplot(merge_df3, aes(x = barrier, y = prize_money)) +
+  geom_point(alpha = 0.3, color = 'blue') + 
+  labs(x = 'Number of Barriers', y = 'Prize Money', title = 'Prize Money vs. Number of Barrier')
+```
+```{r weight, fig.align='center', echo = F}
+ggplot(merge_df3, aes(x = handicap_weight, y = prize_money)) +
+  geom_point(alpha = 0.3, color = 'blue') + 
+  labs(x = 'Carried Weights', y = 'Prize Money', title = 'Prize Money vs. Carried Weights')
+```
+From the above plots, it seems that smaller number of barriers are associated with more winnings and horses carrying weights between 55-60 are likely to have more winnings.  
+  
+    
+## Summary  
+This notebook analyzes the effects of horse age and sex, weather, and typical racing parameters (i.e., distance, number of barriers, and carried weights) on aggregated prize money. These factors all show interesting roles on winning, but the trends are often clouded by the large number of outliers (very large prize money). So for the next step in this analysis, better metric needs to be used to quantify winning (i.e., win percentage). Also, other relevant factors will be analyzed and machine learning algorithms will be explored to see if it is possible to predict the outcome of the races.     
+
+   
+## Appendix  
+
+### Basic Information of the Datasets   
+
+*conditions.csv*   
+```{r data info condition, echo = F}
+str(condition)
+``` 
+*horses.csv*   
+```{r data info horse, echo = F}
+str(horse)
+``` 
+*horse_sexes.csv*  
+```{r data info horse sex, echo = F}
+str(horse_sex)
+``` 
+*riders.csv*  
+```{r data info ridder, echo = F}
+str(rider)
+``` 
+*weathers.csv*  
+```{r data info weather, echo = F}
+str(weather)
+``` 
+*forms.csv*  
+```{r data info form, echo = F}
+str(form)
+``` 
+*markets.csv*  
+```{r data info market, echo = F}
+str(market)
+``` 
+*odds.csv*  
+```{r data info odd, echo = F}
+str(odds)
+``` 
+*runners.csv*  
+```{r data info runner, echo = F}
+str(runner)
+``` 
+
